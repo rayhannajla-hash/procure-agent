@@ -13,7 +13,7 @@ Procure Agent gives that "quick buy" a proper path without slowing it down:
 1. **Request in plain words.** "Line 2 needs 2 temperature-controlled soldering stations, 60-80W, under $100 each."
 2. **The agent shops.** It searches 100M+ live listings through [Channel3](https://trychannel3.com) and compares them on spec, price, stock and retailer.
 3. **The policy decides, in code.** Order limit, unit-price cap, approved retailers, restricted items, and the cost center's remaining monthly budget. The agent can dry-run the policy, but it cannot talk its way past it.
-4. **A person approves in PayPal.** The agent creates a PayPal order and routes it to the approver for that amount (Line Supervisor up to $150, Plant Manager up to $600). The approver sees the request, the chosen listing, what else was compared, and every policy check, then pays with PayPal Checkout or rejects.
+4. **A person approves in PayPal, or has already.** The agent creates a PayPal order and routes it to the approver for that amount (Line Supervisor up to $150, Plant Manager up to $600). The approver sees the request, the chosen listing, what else was compared, and every policy check, then pays with PayPal Checkout or rejects. For small buys a manager can authorize an **agent wallet** once in PayPal: orders up to $50 that pass every check with no warnings (at most $150 a day) are then paid by the agent straight away, and the manager can revoke the wallet at any time.
 5. **A purchase order is recorded.** The capture is confirmed with PayPal and a PO number is issued against the cost center.
 
 ## How it uses PayPal
@@ -26,9 +26,18 @@ All server-side PayPal calls go through PayPal's own **Agent Toolkit** ([`@paypa
 | `pay_order` | `src/paypal.mjs` | Captures the payment after the approver confirms in PayPal Checkout |
 | `get_order` | `src/paypal.mjs` | Reads the order's live status from PayPal (`GET /api/requisitions/:id/order`) |
 
+The agent wallet uses **PayPal Vault** (the toolkit has no vault tools, so these REST calls go through the toolkit's own authenticated client):
+
+| PayPal API | What it does here |
+|---|---|
+| `POST /v3/vault/setup-tokens` | Starts the one-time "let the agent pay small orders" approval (no purchase) |
+| `POST /v3/vault/payment-tokens` | Turns the manager's approval into a reusable payment token |
+| `POST /v2/checkout/orders` with `payment_source.paypal.vault_id` | Pays a small, compliant order with that token in one call (merchant-initiated) |
+| `DELETE /v3/vault/payment-tokens/{id}` | Revokes the agent's authority at PayPal |
+
 On the approver's screen, the **PayPal JavaScript SDK** renders PayPal Checkout for the order the agent created (`createOrder` returns the agent's order id; `onApprove` triggers the capture).
 
-The design choice: the model never holds a "pay" tool. It can only *propose* a basket. `submit_requisition` re-runs the policy in code, creates the PayPal order only if every rule passes, and the payment itself needs a human to approve it inside PayPal. That keeps a fast agent from becoming a fast way to spend money.
+The design choice: the model never holds a "pay" tool. It can only *propose* a basket. `submit_requisition` re-runs the policy in code and creates the PayPal order only if every rule passes. Then either a human approves the payment inside PayPal, or, for orders under the wallet limit, server code pays with the wallet a manager authorized in PayPal beforehand. The model does not choose between the two. That keeps a fast agent from becoming a fast way to spend money.
 
 ## How it uses AI
 
@@ -71,8 +80,9 @@ To approve a payment you need a **sandbox Personal (buyer) account**: PayPal Dev
 
 1. **Request** tab: pick the soldering-station example and run it. Watch the searches, the policy checks, and the requisition being routed.
 2. **Approvals** tab: approve it with PayPal (sandbox buyer account). A PO number and the PayPal capture id appear.
-3. **Orders & budget** tab: the cost center's budget moves; the ledger shows the PO and capture.
-4. Try the "15 cordless drills, the best ones" example: it exceeds the per-order limit, so the agent declines and points to an RFQ instead of ordering.
+3. Still in **Approvals**: *Authorize with PayPal* on the Agent wallet card (same sandbox buyer account). Back in **Request**, run the "3 ESD wrist straps, under $10 each" example: it is paid by the agent at once and gets a PO without waiting for approval.
+4. **Orders & budget** tab: the cost center's budget moves; the ledger shows the PO and capture.
+5. Try the "15 cordless drills, the best ones" example: it exceeds the per-order limit, so the agent declines and points to an RFQ instead of ordering.
 
 ## Spend policy
 
@@ -85,6 +95,7 @@ To approve a payment you need a **sandbox Personal (buyer) account**: PayPal Dev
 - restricted items blocked (gift cards, alcohol, tobacco, and so on)
 - monthly budgets per cost center (Line 2 Maintenance, QA Lab, Safety)
 - approval tiers by amount: Line Supervisor up to $150, Plant Manager up to $600
+- agent wallet: once a manager authorizes it in PayPal, orders up to $50 with no warnings are paid by the agent, at most $150 a day
 
 ## Architecture
 

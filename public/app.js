@@ -7,7 +7,7 @@ const EXAMPLES = [
   { cc: "LINE-2-MAINT", text: "Line 2 needs 2 temperature-controlled soldering stations for rework, 60-80W, ideally under $100 each. Needed this week." },
   { cc: "EHS", text: "EHS needs 10 ear muffs, NRR 23 or higher, for the operators next to the press line." },
   { cc: "QA-LAB", text: "QA lab needs 3 desktop anti-static (ESD) mats with grounding cords for the inspection benches." },
-  { cc: "QA-LAB", text: "QA lab needs 5 ESD wrist straps with grounding cords for the new inspectors." },
+  { cc: "QA-LAB", text: "QA lab needs 3 ESD wrist straps with grounding cords for the new inspectors, under $10 each." },
   { cc: "LINE-2-MAINT", text: "Buy 15 cordless drills for the whole maintenance team, the best ones available." },
 ];
 
