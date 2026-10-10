@@ -1,0 +1,77 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Procure Agent</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header class="top">
+    <div class="brand">
+      <span class="logo" aria-hidden="true">PA</span>
+      <div>
+        <h1>Procure Agent</h1>
+        <p class="tag">MRO purchasing for small plants: the agent shops, the policy decides, a person approves in PayPal.</p>
+      </div>
+    </div>
+    <span class="env" id="env">sandbox</span>
+  </header>
+
+  <nav class="tabs" role="tablist">
+    <button role="tab" data-tab="request" aria-selected="true">1 · Request</button>
+    <button role="tab" data-tab="approvals" aria-selected="false">2 · Approvals <span class="count" id="approvalCount" hidden></span></button>
+    <button role="tab" data-tab="orders" aria-selected="false">3 · Orders &amp; budget</button>
+  </nav>
+
+  <main>
+    <!-- Requester -->
+    <section id="tab-request" class="tab">
+      <form id="requestForm" class="card">
+        <div class="row">
+          <label>Requested by<input id="requester" value="Budi, Line 2 lead" maxlength="60"></label>
+          <label>Cost center<select id="costCenter"></select></label>
+        </div>
+        <label>What do you need?
+          <textarea id="text" rows="3" maxlength="600" placeholder="e.g. Line 2 needs 2 temperature-controlled soldering stations, 60-80W, under $100 each."></textarea>
+        </label>
+        <div class="examples" id="examples"></div>
+        <div class="actions">
+          <button type="submit" id="go" class="primary">Find it and route for approval</button>
+          <span class="hint" id="modeHint"></span>
+        </div>
+      </form>
+
+      <div id="run" hidden>
+        <ol class="steps" id="steps"></ol>
+        <div id="searches"></div>
+        <div id="policyBox"></div>
+        <div id="outcome"></div>
+      </div>
+    </section>
+
+    <!-- Approver -->
+    <section id="tab-approvals" class="tab" hidden>
+      <p class="lead">Nothing is paid until an approver signs off in PayPal. Approving opens PayPal Checkout; the order is captured only after the approver confirms there.</p>
+      <div id="approvals"></div>
+    </section>
+
+    <!-- Ledger -->
+    <section id="tab-orders" class="tab" hidden>
+      <div class="budgets" id="budgets"></div>
+      <div class="card">
+        <h2>Requisitions and purchase orders</h2>
+        <div class="tablewrap"><table id="ledger"><thead><tr><th>Req</th><th>Status</th><th>Cost center</th><th>Items</th><th class="num">Total</th><th>PayPal</th></tr></thead><tbody></tbody></table></div>
+      </div>
+      <details class="card policy-card">
+        <summary>Spend policy in force</summary>
+        <div id="policyText"></div>
+      </details>
+      <button type="button" id="reset" class="link" hidden>Reset demo data</button>
+    </section>
+  </main>
+
+  <footer class="foot">PayPal sandbox only: no real money moves. Product data from Channel3; listings link to the real retailer.</footer>
+  <script src="app.js" type="module"></script>
+</body>
+</html>

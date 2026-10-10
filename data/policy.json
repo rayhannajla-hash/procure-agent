@@ -1,0 +1,46 @@
+{
+  "company": "Demo Plant: touch panel assembly",
+  "currency": "USD",
+  "hard_limit_per_order": 600,
+  "max_unit_price": 400,
+  "max_quantity_per_line": 20,
+  "require_in_stock": true,
+  "approval_tiers": [
+    { "max_total": 150, "approver": "Line Supervisor" },
+    { "max_total": 600, "approver": "Plant Manager" }
+  ],
+  "approved_retailers": [
+    "acehardware.com",
+    "amazon.com",
+    "bhphotovideo.com",
+    "grainger.com",
+    "homedepot.com",
+    "lowes.com",
+    "microcenter.com",
+    "newegg.com",
+    "northerntool.com",
+    "ryobitools.com",
+    "staples.com",
+    "tractorsupply.com",
+    "uline.com",
+    "walmart.com",
+    "zoro.com"
+  ],
+  "blocked_keywords": [
+    "gift card",
+    "alcohol",
+    "wine",
+    "beer",
+    "firearm",
+    "ammunition",
+    "vape",
+    "tobacco",
+    "lottery",
+    "crypto"
+  ],
+  "cost_centers": {
+    "LINE-2-MAINT": { "name": "Line 2 Maintenance", "monthly_budget": 1200 },
+    "QA-LAB": { "name": "QA Lab", "monthly_budget": 800 },
+    "EHS": { "name": "Safety (EHS)", "monthly_budget": 600 }
+  }
+}

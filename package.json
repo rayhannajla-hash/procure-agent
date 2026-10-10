@@ -1,0 +1,19 @@
+{
+  "name": "procure-agent",
+  "version": "0.1.0",
+  "description": "A purchasing agent for small factories: finds MRO supplies with Channel3, enforces spend policy in code, and pays through PayPal only after a human approves.",
+  "type": "module",
+  "main": "src/server.mjs",
+  "scripts": {
+    "start": "node --env-file-if-exists=.env src/server.mjs",
+    "dev": "node --env-file-if-exists=.env --watch src/server.mjs"
+  },
+  "engines": {
+    "node": ">=22.0.0"
+  },
+  "license": "MIT",
+  "dependencies": {
+    "@google/genai": "^2.28.0",
+    "@paypal/agent-toolkit": "^1.11.0"
+  }
+}
