@@ -1,0 +1,7 @@
+.env
+.env.*
+!.env.example
+node_modules
+.git
+data/ledger.json
+data/*.tmp

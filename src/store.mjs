@@ -3,8 +3,10 @@ import { readFileSync, writeFileSync, renameSync, mkdirSync, existsSync } from "
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
-const DATA_DIR = process.env.DATA_DIR || join(dirname(fileURLToPath(import.meta.url)), "..", "data");
-const LEDGER = join(DATA_DIR, "ledger.json");
+const DATA_DIR = join(dirname(fileURLToPath(import.meta.url)), "..", "data");
+// The ledger can live elsewhere (on Cloud Run: a Cloud Storage volume, so it survives scale-to-zero).
+const LEDGER_DIR = process.env.LEDGER_DIR || DATA_DIR;
+const LEDGER = join(LEDGER_DIR, "ledger.json");
 const POLICY = join(DATA_DIR, "policy.json");
 
 export const policy = JSON.parse(readFileSync(POLICY, "utf8"));
@@ -13,7 +15,7 @@ const empty = () => ({ seq: 0, po_seq: 0, requisitions: [] });
 let db = existsSync(LEDGER) ? JSON.parse(readFileSync(LEDGER, "utf8")) : empty();
 
 function save() {
-  mkdirSync(DATA_DIR, { recursive: true });
+  mkdirSync(LEDGER_DIR, { recursive: true });
   const tmp = `${LEDGER}.tmp`;
   writeFileSync(tmp, JSON.stringify(db, null, 2));
   renameSync(tmp, LEDGER);
