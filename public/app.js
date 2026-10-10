@@ -5,7 +5,7 @@ const money = (n) => `$${Number(n).toFixed(2)}`;
 
 const EXAMPLES = [
   { cc: "LINE-2-MAINT", text: "Line 2 needs 2 temperature-controlled soldering stations for rework, 60-80W, ideally under $100 each. Needed this week." },
-  { cc: "EHS", text: "We need 10 pairs of ANSI Z87.1 safety glasses for the new operators starting Monday." },
+  { cc: "EHS", text: "EHS needs 10 ear muffs, NRR 23 or higher, for the operators next to the press line." },
   { cc: "QA-LAB", text: "QA lab needs 3 desktop anti-static (ESD) mats with grounding cords for the inspection benches." },
   { cc: "LINE-2-MAINT", text: "Buy 15 cordless drills for the whole maintenance team, the best ones available." },
 ];
@@ -92,6 +92,12 @@ function productCard(p, { chosen = false, off = false } = {}) {
   </div>`;
 }
 
+function requirementsHtml(reqs) {
+  return reqs?.length ? `<div class="reqs"><span class="hint">Must-haves the agent checked:</span> ${reqs.map((x) => `<span class="pill">${esc(x)}</span>`).join(" ")}</div>` : "";
+}
+
+const covers = (l) => (l.units_covered && l.units_covered !== l.quantity ? ` · covers ${esc(l.units_covered)} units` : "");
+
 function checksHtml(checks) {
   return `<ul class="checks">${checks.map((c) => `<li class="${c.pass ? "pass" : "failc"}"><b>${esc(c.rule)}</b>: ${esc(c.detail)}</li>`).join("")}</ul>`;
 }
@@ -108,7 +114,8 @@ function requisitionCard(r) {
   return `<div class="card">
     <div class="verdict"><h2>${esc(r.id)} routed for approval</h2><span class="pill ok">awaiting ${esc(r.approver)}</span></div>
     <p>${esc(r.summary)}</p>
-    <table class="lines">${r.lines.map((l) => `<tr><td>${esc(l.quantity)} ×</td><td>${esc(l.product.title)}<br><span class="ref">${esc(l.product.retailer)} · ${esc(l.reason ?? "")}</span></td><td class="num">${money(l.line_total)}</td></tr>`).join("")}
+    ${requirementsHtml(r.requirements)}
+    <table class="lines">${r.lines.map((l) => `<tr><td>${esc(l.quantity)} ×</td><td>${esc(l.product.title)}<br><span class="ref">${esc(l.product.retailer)} · ${money(l.product.price)} each${covers(l)}</span><br><span class="ref">${esc(l.reason ?? "")}</span></td><td class="num">${money(l.line_total)}</td></tr>`).join("")}
       <tr><td></td><td><b>Total</b></td><td class="num"><b>${money(r.total)}</b></td></tr></table>
     ${r.compared?.length ? `<details><summary>Also compared (${r.compared.length})</summary><ul class="compared">${r.compared.map((c) => `<li><b>${esc(c.ref)}</b> ${esc(c.product.title)} (${money(c.product.price)}, ${esc(c.product.retailer)}): ${esc(c.note)}</li>`).join("")}</ul></details>` : ""}
     <p class="hint">PayPal order <span class="mono">${esc(r.paypal_order_id)}</span> created; no money moves until the approver confirms in PayPal.</p>
@@ -221,7 +228,8 @@ async function renderApprovals() {
     <div class="meta">${esc(r.requester)} · ${esc(r.cost_center)} · ${new Date(r.created_at).toLocaleString()}</div>
     <p class="meta">“${esc(r.request_text)}”</p>
     <p>${esc(r.summary)}</p>
-    <table class="lines">${r.lines.map((l) => `<tr><td>${esc(l.quantity)} ×</td><td><a href="${esc(l.product.url)}" target="_blank" rel="noopener">${esc(l.product.title)}</a><br><span class="ref">${esc(l.product.retailer)} · ${money(l.product.price)} each</span></td><td class="num">${money(l.line_total)}</td></tr>`).join("")}</table>
+    ${requirementsHtml(r.requirements)}
+    <table class="lines">${r.lines.map((l) => `<tr><td>${esc(l.quantity)} ×</td><td><a href="${esc(l.product.url)}" target="_blank" rel="noopener">${esc(l.product.title)}</a><br><span class="ref">${esc(l.product.retailer)} · ${money(l.product.price)} each${covers(l)}</span>${l.reason ? `<br><span class="ref">${esc(l.reason)}</span>` : ""}</td><td class="num">${money(l.line_total)}</td></tr>`).join("")}</table>
     <details><summary>Policy checks (${r.checks.filter((c) => c.pass).length}/${r.checks.length} pass)</summary>${checksHtml(r.checks)}</details>
     <div class="buttons"><div class="pp" id="pp-${esc(r.id)}"></div><button type="button" class="secondary" data-reject="${esc(r.id)}">Reject</button></div>
     <div class="msg"></div>

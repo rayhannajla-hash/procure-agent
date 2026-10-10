@@ -79,6 +79,7 @@ textarea { resize: vertical; min-height: 84px; }
 .lines { width: 100%; border-collapse: collapse; font-size: 14px; margin: 8px 0; }
 .lines td { padding: 6px 4px; border-top: 1px solid var(--line); vertical-align: top; }
 .num { text-align: right; white-space: nowrap; }
+.reqs { margin: 6px 0 4px; display: flex; flex-wrap: wrap; gap: 4px; align-items: center; }
 .compared { font-size: 13px; color: var(--muted); padding-left: 18px; }
 .approval .meta { color: var(--muted); font-size: 13px; }
 .approval .buttons { display: grid; grid-template-columns: minmax(0, 320px) auto; gap: 12px; align-items: start; margin-top: 12px; }

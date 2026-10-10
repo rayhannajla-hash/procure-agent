@@ -9,7 +9,8 @@ import { addRequisition, updateRequisition, policy } from "./store.mjs";
 // Tried in order; a model that is unavailable or out of free quota falls through to the next.
 const GEMINI_MODELS = (process.env.GEMINI_MODEL || "gemini-3.8-flash,gemini-3.5-flash,gemini-3.5-flash-lite")
   .split(",").map((m) => m.trim()).filter(Boolean);
-const MAX_TURNS = 12;
+const MAX_TURNS = 14;
+const FINISH_NUDGE = "You have not finished. Do not ask the requester questions: use the information given, make reasonable assumptions and state them in the summary. Call submit_requisition if a compliant basket exists, otherwise decline_request.";
 
 export const agentMode = process.env.GEMINI_API_KEY ? "gemini" : "scripted";
 export const MODEL = agentMode === "gemini" ? GEMINI_MODELS[0] : null;
@@ -17,13 +18,14 @@ export const MODEL = agentMode === "gemini" ? GEMINI_MODELS[0] : null;
 const TOOL_DEFS = [
   {
     name: "search_catalog",
-    description: "Search live retail listings (Channel3, 100M+ products) for an item to buy. Use short English product terms with the key spec, e.g. 'temperature controlled soldering station 60W'. Only in-stock listings come back. Each result has a ref (P1, P2, ...) that the other tools use.",
+    description: "Search live retail listings (Channel3, 100M+ products) for an item to buy. Use short English product terms with the key spec, e.g. 'temperature controlled soldering station 60W'. Only in-stock listings come back, and by default only from the company's approved retailers. Each result has a ref (P1, P2, ...) that the other tools use. The number of searches per request is limited.",
     parameters: {
       type: "object",
       properties: {
         query: { type: "string", description: "Product search terms." },
         max_unit_price: { type: "number", description: "Optional price ceiling per unit in USD." },
         limit: { type: "integer", description: "How many listings to return, 3-8. Default 6." },
+        approved_only: { type: "boolean", description: "Default true. Set false only to show the requester what exists elsewhere when no approved retailer has a fitting item; those listings cannot be ordered." },
       },
       required: ["query"],
     },
@@ -52,16 +54,22 @@ const TOOL_DEFS = [
     parameters: {
       type: "object",
       properties: {
+        requirements: {
+          type: "array",
+          description: "The must-have specs you derived from the request and its use, e.g. 'clear lens (indoor line work)', 'ANSI Z87.1 marked', '10 pairs total'.",
+          items: { type: "string" },
+        },
         lines: {
           type: "array",
           items: {
             type: "object",
             properties: {
               ref: { type: "string" },
-              quantity: { type: "integer" },
-              reason: { type: "string", description: "One sentence: why this listing fits the request." },
+              quantity: { type: "integer", description: "Number of listings to buy (packs, if the listing is a pack)." },
+              units_covered: { type: "integer", description: "How many of the requested units this line delivers, e.g. 2 packs of 6 pairs = 12." },
+              reason: { type: "string", description: "How this listing meets each requirement, quoting the title or features." },
             },
-            required: ["ref", "quantity", "reason"],
+            required: ["ref", "quantity", "units_covered", "reason"],
           },
         },
         summary: { type: "string", description: "Two or three sentences for the approver: what is being bought, for what, and why this choice." },
@@ -100,13 +108,19 @@ function systemPrompt(costCenter) {
 This request is charged to cost center ${costCenter} (${cc?.name ?? "unknown"}). You cannot change the cost center.
 
 How to work:
-- Work out exactly what is needed: item, quantity, must-have specs, budget hints, urgency. Keep the requested quantity; never change it silently.
-- Search with one to three focused queries. Compare listings on fit to the spec first, then price, approved retailer, stock and rating. Prefer listings from approved retailers.
-- Pick the best-value listing that meets the spec. Run check_policy on the basket. If a rule fails, adapt (another listing, an approved retailer, a cheaper model that still meets the spec) and check again.
+1. Work out what is needed: item, quantity, budget hints, urgency, and the use. Then turn the use into must-have specs. This is a factory floor: an assembly line, an electronics rework bench, a QA lab, a warehouse. Examples: safety glasses for operators working indoors need clear lenses (tinted sunglasses are wrong indoors) and an ANSI Z87.1 mark; tools at an electronics bench should be ESD-safe; anything for a production line should be a work-grade product, not a toy, kid's, novelty, decorative or cosmetic item. Keep the requested quantity; never change it silently.
+2. Search with focused queries that include the key specs (e.g. "ear muffs NRR 25"). You have at most ${policy.max_searches_per_request ?? 4} searches, so make each one count; searches already cover only approved retailers. Read each listing's title, features and description.
+3. Rule out listings that contradict a must-have (wrong lens tint, wrong voltage, wrong size, not the item asked for), even if they are cheaper. A must-have counts as met only when the title, features or description show it; if no listing shows it, try different terms. If the approved retailers simply do not carry a fitting item, decline and say which kind of supplier Purchasing should add (you may run one search with approved_only=false to show what exists elsewhere).
+4. Among the listings that meet every must-have, pick the best value: price, approved retailer, stock, rating. Cheapest is not automatically best if a slightly dearer listing fits clearly better.
+5. Packs: when a listing is a pack (e.g. "Pack of 12", "5pcs", "box of 10", "2-pack"), the order quantity is the number of packs. Buy enough packs to cover the requested units with the least overshoot, and report units_covered. Never order 10 boxes of 12 when 10 pieces were asked for.
+6. Run check_policy on the basket. If a rule fails, adapt (another listing, an approved retailer, a cheaper model that still meets every must-have) and check again.
+7. Before submitting, check each requirement against the chosen listing once more and list the requirements in submit_requisition.
 - Finish with exactly one of: submit_requisition (everything passes), or decline_request (it cannot be bought within policy). When the order is too large or the budget is short, decline and point to the right next step instead of trimming the order.
 - Use only refs that came back from search_catalog. Never invent products, prices, retailers or stock.
 
 Policy in force (enforced in code, you cannot override it): one order at most $${p.hard_limit_per_order}; unit price at most $${p.max_unit_price}; 1-${p.max_quantity_per_line} units per line; in stock only; approved retailers only (${p.approved_retailers.join(", ")}); no restricted items (${p.blocked_keywords.join(", ")}). Approvers: ${p.approval_tiers.map((t) => `up to $${t.max_total} -> ${t.approver}`).join("; ")}.
+
+There is no back-and-forth with the requester: never end your turn with a question. If a detail is missing, make a reasonable assumption for a factory setting and state it in the summary.
 
 Write short, plain notes between tool calls, in the requester's language.`;
 }
@@ -117,6 +131,7 @@ class Session {
     this.request = request;
     this.catalog = new Map(); // ref -> product
     this.seq = 0;
+    this.searches = 0;
     this.result = null;
   }
   remember(product) {
@@ -128,7 +143,15 @@ class Session {
   resolve(lines) {
     const missing = lines.filter((l) => !this.catalog.has(l.ref)).map((l) => l.ref);
     if (missing.length) return { error: `Unknown refs: ${missing.join(", ")}. Use refs from search_catalog results.` };
-    return { lines: lines.map((l) => ({ ref: l.ref, product: this.catalog.get(l.ref), quantity: Number(l.quantity), reason: l.reason })) };
+    return {
+      lines: lines.map((l) => ({
+        ref: l.ref,
+        product: this.catalog.get(l.ref),
+        quantity: Number(l.quantity),
+        units_covered: Number.isInteger(Number(l.units_covered)) ? Number(l.units_covered) : null,
+        reason: l.reason,
+      })),
+    };
   }
 }
 
@@ -136,12 +159,17 @@ async function runTool(s, name, input) {
   try {
     switch (name) {
       case "search_catalog": {
-        const results = await searchCatalog({ query: input.query, maxUnitPrice: input.max_unit_price, limit: input.limit ?? 6 });
+        const budget = policy.max_searches_per_request ?? 4;
+        if (s.searches >= budget) {
+          return { status: "error", error: `Search budget used (${budget} searches). Decide now with what you have: submit_requisition or decline_request.` };
+        }
+        s.searches += 1;
+        const results = await searchCatalog({ query: input.query, maxUnitPrice: input.max_unit_price, limit: input.limit ?? 6, approvedOnly: input.approved_only !== false });
         const rows = results.map((p) => ({ ref: s.remember(p), ...p, approved_retailer: isApprovedRetailer(p.retailer) }));
         s.emit("results", { query: input.query, results: rows });
         return {
-          results: rows.map(({ ref, title, brand, price, currency, retailer, approved_retailer, in_stock, rating, key_features }) =>
-            ({ ref, title, brand, price, currency, retailer, approved_retailer, in_stock, rating, key_features })),
+          results: rows.map(({ ref, title, brand, price, currency, retailer, approved_retailer, in_stock, rating, key_features, description }) =>
+            ({ ref, title, brand, price, currency, retailer, approved_retailer, in_stock, rating, key_features, description })),
         };
       }
       case "check_policy": {
@@ -160,12 +188,14 @@ async function runTool(s, name, input) {
         if (verdict.verdict === "blocked") {
           return { status: "blocked", failed: verdict.checks.filter((c) => !c.pass), note: "Nothing was ordered. Adapt the basket or call decline_request." };
         }
-        const lineRecords = r.lines.map(({ ref, product, quantity, reason }) => ({ ref, quantity, reason, product, line_total: Math.round(product.price * quantity * 100) / 100 }));
+        const lineRecords = r.lines.map(({ ref, product, quantity, units_covered, reason }) =>
+          ({ ref, quantity, units_covered, reason, product, line_total: Math.round(product.price * quantity * 100) / 100 }));
         const compared = (input.compared ?? []).filter((c) => s.catalog.has(c.ref)).map((c) => ({ ...c, product: s.catalog.get(c.ref) }));
         const req = addRequisition({
           requester: s.request.requester,
           cost_center: s.request.cost_center,
           request_text: s.request.text,
+          requirements: (input.requirements ?? []).map(String).slice(0, 12),
           summary: input.summary,
           lines: lineRecords,
           compared,
@@ -230,6 +260,7 @@ async function geminiLoop(s) {
   };
   const contents = [{ role: "user", parts: [{ text: `Request from ${s.request.requester || "a staff member"}:\n${s.request.text}` }] }];
   const usage = { input_tokens: 0, output_tokens: 0, models: new Set() };
+  let nudges = 0;
 
   for (let turn = 0; turn < MAX_TURNS && !s.result; turn++) {
     const { response, model } = await generate(contents, config);
@@ -243,7 +274,12 @@ async function geminiLoop(s) {
       if (part.text && !part.thought && part.text.trim()) s.emit("note", { text: part.text.trim() });
     }
     const calls = response.functionCalls ?? [];
-    if (!calls.length) break;
+    if (!calls.length) {
+      // The model stopped talking without a decision; ask once more for the required final tool call.
+      if (nudges++ >= 2) break;
+      contents.push(candidate.content, { role: "user", parts: [{ text: FINISH_NUDGE }] });
+      continue;
+    }
 
     contents.push(candidate.content); // unchanged, so thought signatures survive
     const outs = [];
@@ -278,7 +314,7 @@ async function scriptedRun(s) {
   const pick = (found.results ?? []).filter((r) => r.approved_retailer && r.in_stock && r.price <= policy.max_unit_price)
     .sort((a, b) => a.price - b.price)[0];
   if (!pick) return void await step("decline_request", { reason: "No in-stock listing from an approved retailer matched.", next_step: "Rephrase the request with a more specific product name." });
-  const lines = [{ ref: pick.ref, quantity: 1, reason: "Cheapest in-stock listing from an approved retailer." }];
+  const lines = [{ ref: pick.ref, quantity: 1, units_covered: 1, reason: "Cheapest in-stock listing from an approved retailer." }];
   const verdict = await step("check_policy", { lines });
   if (verdict.verdict === "blocked") return void await step("decline_request", { reason: "The cheapest match fails the spend policy.", next_step: "Ask the cost-center owner or raise an RFQ." });
   await step("submit_requisition", { lines, summary: `Scripted pick for: ${s.request.text.slice(0, 200)}` });

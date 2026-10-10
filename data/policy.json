@@ -6,21 +6,33 @@
   "max_quantity_per_line": 20,
   "require_in_stock": true,
   "approval_tiers": [
-    { "max_total": 150, "approver": "Line Supervisor" },
-    { "max_total": 600, "approver": "Plant Manager" }
+    {
+      "max_total": 150,
+      "approver": "Line Supervisor"
+    },
+    {
+      "max_total": 600,
+      "approver": "Plant Manager"
+    }
   ],
   "approved_retailers": [
     "acehardware.com",
     "amazon.com",
+    "bestbuy.com",
     "bhphotovideo.com",
+    "costco.com",
     "grainger.com",
+    "harborfreight.com",
     "homedepot.com",
     "lowes.com",
     "microcenter.com",
     "newegg.com",
     "northerntool.com",
+    "odpbusiness.com",
+    "officedepot.com",
     "ryobitools.com",
     "staples.com",
+    "target.com",
     "tractorsupply.com",
     "uline.com",
     "walmart.com",
@@ -39,8 +51,18 @@
     "crypto"
   ],
   "cost_centers": {
-    "LINE-2-MAINT": { "name": "Line 2 Maintenance", "monthly_budget": 1200 },
-    "QA-LAB": { "name": "QA Lab", "monthly_budget": 800 },
-    "EHS": { "name": "Safety (EHS)", "monthly_budget": 600 }
-  }
+    "LINE-2-MAINT": {
+      "name": "Line 2 Maintenance",
+      "monthly_budget": 1200
+    },
+    "QA-LAB": {
+      "name": "QA Lab",
+      "monthly_budget": 800
+    },
+    "EHS": {
+      "name": "Safety (EHS)",
+      "monthly_budget": 600
+    }
+  },
+  "max_searches_per_request": 4
 }

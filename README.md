@@ -32,7 +32,7 @@ The design choice: the model never holds a "pay" tool. It can only *propose* a b
 
 ## How it uses AI
 
-- **Google Gemini** (via `@google/genai`) runs a tool-use loop in `src/agent.mjs`. It reads the request, picks search terms, compares listings, adapts when a policy check fails (cheaper model, approved retailer), and writes the justification and the "also compared" notes the approver sees. If one Gemini model is unavailable or out of quota, the next one in `GEMINI_MODEL` is tried.
+- **Google Gemini** (via `@google/genai`) runs a tool-use loop in `src/agent.mjs`. It turns the request and its use into must-have specs (operators working indoors need clear lenses, bench tools should be ESD-safe), rules out listings that contradict them, works out pack sizes (10 pieces is not 10 boxes of 12), adapts when a policy check fails, and writes the justification and the "also compared" notes the approver sees. The approver sees the must-haves next to the listing that meets them. If one Gemini model is unavailable or out of quota, the next one in `GEMINI_MODEL` is tried.
 - **Channel3** provides the product data: titles, prices, stock, retailer and buy links across 25,000+ retailers.
 - Without a Gemini key, the app still runs a fixed, non-AI playbook (search, cheapest compliant listing) so the PayPal flow can be tested.
 
@@ -40,7 +40,7 @@ Agent tools:
 
 | Tool | Purpose |
 |---|---|
-| `search_catalog` | Channel3 search, in-stock listings only, optional price ceiling |
+| `search_catalog` | Channel3 search, in-stock listings from approved retailers only (filtered by Channel3 website id), optional price ceiling; at most 4 searches per request |
 | `check_policy` | Dry-run the spend policy on a draft basket |
 | `submit_requisition` | Final basket: policy re-check in code, then PayPal `create_order`, routed to the approver |
 | `decline_request` | Stop when the request cannot be met within policy, and say what to do instead (for example, raise an RFQ) |
@@ -79,7 +79,8 @@ To approve a payment you need a **sandbox Personal (buyer) account**: PayPal Dev
 `data/policy.json` holds the rules, and you can edit it:
 
 - one order at most $600; unit price at most $400; 1-20 units per line; in stock only
-- approved retailers only (Micro Center, Newegg, Home Depot, Lowe's, Grainger, Uline, and others)
+- approved retailers only (Micro Center, Newegg, Home Depot, Lowe's, Northern Tool, Staples, Walmart, Target, and others); searches are restricted to them
+- at most 4 catalog searches per request, so a vague request cannot burn the search budget
 - restricted items blocked (gift cards, alcohol, tobacco, and so on)
 - monthly budgets per cost center (Line 2 Maintenance, QA Lab, Safety)
 - approval tiers by amount: Line Supervisor up to $150, Plant Manager up to $600
