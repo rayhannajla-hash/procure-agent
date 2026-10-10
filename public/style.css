@@ -36,7 +36,9 @@ main { max-width: 1080px; margin: 0 auto; padding: 16px; }
 .card { background: var(--card); border: 1px solid var(--line); border-radius: var(--radius); padding: 16px; margin-bottom: 14px; }
 label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 10px; }
 input, select, textarea { display: block; width: 100%; margin-top: 4px; padding: 9px 10px; border: 1px solid var(--line); border-radius: 8px; background: var(--bg); color: var(--ink); font: inherit; }
-textarea { resize: vertical; }
+textarea { resize: vertical; min-height: 84px; }
+#toggleExamples { padding: 0; margin: -4px 0 8px; }
+.examples[hidden] { display: none; }
 .row { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
 @media (max-width: 600px) { .row { grid-template-columns: 1fr; } }
 .examples { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 12px; }

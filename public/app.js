@@ -35,12 +35,29 @@ async function boot() {
     const e = EXAMPLES[Number(b.dataset.i)];
     $("#text").value = e.text;
     $("#costCenter").value = e.cc;
+    fitText();
+    setExamples(false);
   });
+  $("#toggleExamples").addEventListener("click", () => setExamples($("#examples").hidden));
+  $("#text").addEventListener("input", fitText);
   $("#policyText").innerHTML = policyHtml(config.policy);
   $("#reset").hidden = !config.allow_reset;
   refreshCount();
   const q = new URLSearchParams(location.search);
   if (q.has("approved") || q.has("cancelled")) showTab("approvals");
+}
+
+function setExamples(show) {
+  $("#examples").hidden = !show;
+  $("#toggleExamples").textContent = show ? "Hide examples" : "Show examples";
+  $("#toggleExamples").setAttribute("aria-expanded", String(show));
+}
+
+// Grow the request box to fit its text, so a picked example is readable in full.
+function fitText() {
+  const t = $("#text");
+  t.style.height = "auto";
+  t.style.height = `${t.scrollHeight + 2}px`;
 }
 
 function policyHtml(p) {
@@ -104,7 +121,9 @@ $("#requestForm").addEventListener("submit", async (ev) => {
   const text = $("#text").value.trim();
   if (!text) return $("#text").focus();
   $("#go").disabled = true;
+  setExamples(false);
   $("#run").hidden = false;
+  $("#run").scrollIntoView({ behavior: "smooth", block: "start" });
   for (const id of ["#steps", "#searches", "#policyBox", "#outcome"]) $(id).innerHTML = "";
   chosenRefs = new Set();
   lastRun = { results: new Map() };
