@@ -49,7 +49,9 @@ Agent tools:
 
 ### Hosted demo
 
-_Link coming soon._
+**https://procure-agent-951814937148.us-central1.run.app**
+
+Runs on Google Cloud Run against the PayPal sandbox. Approving a payment needs a PayPal sandbox buyer account; test credentials for judges are in the Devpost submission's testing instructions.
 
 ### Run it yourself
 
