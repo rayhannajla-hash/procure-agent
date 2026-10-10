@@ -7,6 +7,7 @@ const EXAMPLES = [
   { cc: "LINE-2-MAINT", text: "Line 2 needs 2 temperature-controlled soldering stations for rework, 60-80W, ideally under $100 each. Needed this week." },
   { cc: "EHS", text: "EHS needs 10 ear muffs, NRR 23 or higher, for the operators next to the press line." },
   { cc: "QA-LAB", text: "QA lab needs 3 desktop anti-static (ESD) mats with grounding cords for the inspection benches." },
+  { cc: "QA-LAB", text: "QA lab needs 5 ESD wrist straps with grounding cords for the new inspectors." },
   { cc: "LINE-2-MAINT", text: "Buy 15 cordless drills for the whole maintenance team, the best ones available." },
 ];
 
@@ -44,7 +45,18 @@ async function boot() {
   $("#reset").hidden = !config.allow_reset;
   refreshCount();
   const q = new URLSearchParams(location.search);
-  if (q.has("approved") || q.has("cancelled")) showTab("approvals");
+  if (q.get("wallet") === "approved") {
+    history.replaceState(null, "", "/");
+    showTab("approvals");
+    const id = q.get("approval_token_id") || q.get("approval_session_id") || q.get("token");
+    const res = await fetch("/api/wallet/confirm", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ setup_token_id: id }) });
+    const out = await res.json();
+    renderWallet(res.ok ? null : out.error);
+  } else if (q.get("wallet") === "cancelled") {
+    history.replaceState(null, "", "/");
+    showTab("approvals");
+    renderWallet("Authorization cancelled in PayPal; the agent wallet was not set up.");
+  } else if (q.has("approved") || q.has("cancelled")) showTab("approvals");
 }
 
 function setExamples(show) {
@@ -115,6 +127,16 @@ function policyCard(v) {
 }
 
 function requisitionCard(r) {
+  if (r.auto_paid) {
+    return `<div class="card">
+      <div class="verdict"><h2>${esc(r.po_number)} paid by the agent wallet</h2><span class="pill ok">no approval needed</span></div>
+      <p>${esc(r.summary)}</p>
+      ${requirementsHtml(r.requirements)}
+      <table class="lines">${r.lines.map((l) => `<tr><td>${esc(l.quantity)} ×</td><td>${esc(l.product.title)}<br><span class="ref">${esc(l.product.retailer)} · ${money(l.product.price)} each${covers(l)}</span></td><td class="num">${money(l.line_total)}</td></tr>`).join("")}
+        <tr><td></td><td><b>Total</b></td><td class="num"><b>${money(r.total)}</b></td></tr></table>
+      <div class="okbox">Within the wallet limit and every policy check passed, so the agent paid with the PayPal wallet ${esc(r.approved_by?.replace("Agent wallet ", "") ?? "")}. PayPal capture <span class="mono">${esc(r.capture_id)}</span>.</div>
+    </div>`;
+  }
   return `<div class="card">
     <div class="verdict"><h2>${esc(r.id)} routed for approval</h2><span class="pill ok">awaiting ${esc(r.approver)}</span></div>
     <p>${esc(r.summary)}</p>
@@ -224,7 +246,36 @@ async function refreshCount() {
   return list;
 }
 
+async function renderWallet(message) {
+  const w = await (await fetch("/api/wallet")).json();
+  const box = $("#wallet");
+  const note = message ? `<div class="err">${esc(message)}</div>` : "";
+  box.innerHTML = w.authorized
+    ? `${note}<div class="verdict"><h2>Agent wallet</h2><span class="pill ok">authorized</span></div>
+       <p>The agent pays orders up to <b>${money(w.max_order_total)}</b> that pass every policy check with no warnings, at most ${money(w.max_per_day)} a day, from the PayPal wallet of <b>${esc(w.authorized_by)}</b>${w.payer_email ? ` (${esc(w.payer_email)})` : ""}. Paid today: ${money(w.spent_today)}.</p>
+       <button type="button" class="secondary" id="revokeWallet">Revoke in PayPal</button>`
+    : `${note}<div class="verdict"><h2>Agent wallet</h2><span class="pill bad">not authorized</span></div>
+       <p>Let the agent pay small, compliant orders (up to ${money(w.max_order_total)}, at most ${money(w.max_per_day)} a day) without waiting for you. You approve once in PayPal and can revoke at any time; everything larger still comes here.</p>
+       <button type="button" class="primary" id="authorizeWallet">Authorize with PayPal</button>`;
+}
+
+$("#wallet").addEventListener("click", async (ev) => {
+  if (ev.target.id === "authorizeWallet") {
+    ev.target.disabled = true;
+    const res = await fetch("/api/wallet/setup", { method: "POST" });
+    const out = await res.json();
+    if (!res.ok || !out.approve_url) { ev.target.disabled = false; return renderWallet(out.error ?? "PayPal did not return an approval link."); }
+    location.href = out.approve_url;
+  }
+  if (ev.target.id === "revokeWallet") {
+    if (!confirm("Revoke the agent wallet? Small orders will need approval again.")) return;
+    await fetch("/api/wallet/revoke", { method: "POST" });
+    renderWallet();
+  }
+});
+
 async function renderApprovals() {
+  renderWallet();
   const list = (await refreshCount()).filter((r) => r.status === "awaiting_approval");
   const box = $("#approvals");
   if (!list.length) { box.innerHTML = `<div class="card"><p class="hint">Nothing waiting for approval.</p></div>`; return; }
@@ -285,7 +336,7 @@ async function renderLedger() {
   }).join("");
   $("#ledger tbody").innerHTML = list.length ? list.map((r) => `<tr>
     <td><b>${esc(r.po_number ?? r.id)}</b>${r.po_number ? `<br><span class="ref">${esc(r.id)}</span>` : ""}</td>
-    <td><span class="status ${esc(r.status)}">${esc(r.status.replace("_", " "))}</span>${r.reject_reason ? `<br><span class="ref">${esc(r.reject_reason)}</span>` : ""}</td>
+    <td><span class="status ${esc(r.status)}">${esc(r.status.replace("_", " "))}</span>${r.auto_paid ? `<br><span class="ref">agent wallet</span>` : ""}${r.reject_reason ? `<br><span class="ref">${esc(r.reject_reason)}</span>` : ""}</td>
     <td>${esc(r.cost_center)}</td>
     <td>${r.lines.map((l) => `${esc(l.quantity)} × ${esc(l.product.title)}`).join("<br>")}</td>
     <td class="num">${money(r.total)}</td>

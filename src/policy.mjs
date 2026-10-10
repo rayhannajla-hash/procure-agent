@@ -99,6 +99,7 @@ export function policySummary() {
     approval_tiers: policy.approval_tiers,
     approved_retailers: policy.approved_retailers,
     blocked_keywords: policy.blocked_keywords,
+    agent_wallet: policy.agent_wallet ?? null,
     cost_centers: Object.entries(policy.cost_centers).map(([id, c]) => ({ id, ...c })),
   };
 }

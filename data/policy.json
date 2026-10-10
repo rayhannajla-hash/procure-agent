@@ -64,5 +64,9 @@
       "monthly_budget": 600
     }
   },
-  "max_searches_per_request": 4
+  "max_searches_per_request": 4,
+  "agent_wallet": {
+    "max_order_total": 50,
+    "max_per_day": 150
+  }
 }

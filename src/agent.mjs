@@ -3,8 +3,8 @@
 import { GoogleGenAI, ApiError } from "@google/genai";
 import { searchCatalog } from "./channel3.mjs";
 import { evaluate, isApprovedRetailer, policySummary } from "./policy.mjs";
-import { createOrder } from "./paypal.mjs";
-import { addRequisition, updateRequisition, policy } from "./store.mjs";
+import { createOrder, payWithWallet } from "./paypal.mjs";
+import { addRequisition, updateRequisition, policy, getWallet, autoPaidToday } from "./store.mjs";
 
 // Tried in order; a model that is unavailable or out of free quota falls through to the next.
 const GEMINI_MODELS = (process.env.GEMINI_MODEL || "gemini-3.8-flash,gemini-3.5-flash,gemini-3.5-flash-lite")
@@ -124,7 +124,7 @@ How to work:
 - Finish with exactly one of: submit_requisition (everything passes), or decline_request (it cannot be bought within policy). When the order is too large or the budget is short, decline and point to the right next step instead of trimming the order.
 - Use only refs that came back from search_catalog. Never invent products, prices, retailers or stock.
 
-Policy in force (enforced in code, you cannot override it): one order at most $${p.hard_limit_per_order}; unit price at most $${p.max_unit_price}; 1-${p.max_quantity_per_line} units per line; in stock only; approved retailers only (${p.approved_retailers.join(", ")}); no restricted items (${p.blocked_keywords.join(", ")}). Approvers: ${p.approval_tiers.map((t) => `up to $${t.max_total} -> ${t.approver}`).join("; ")}.
+Policy in force (enforced in code, you cannot override it): one order at most $${p.hard_limit_per_order}; unit price at most $${p.max_unit_price}; 1-${p.max_quantity_per_line} units per line; in stock only; approved retailers only (${p.approved_retailers.join(", ")}); no restricted items (${p.blocked_keywords.join(", ")}). Approvers: ${p.approval_tiers.map((t) => `up to $${t.max_total} -> ${t.approver}`).join("; ")}.${p.agent_wallet ? ` When a manager has authorized the agent wallet in PayPal, orders up to $${p.agent_wallet.max_order_total} with no warnings are paid by the server right away (at most $${p.agent_wallet.max_per_day} a day); you do not choose this, submit_requisition decides.` : ""}
 
 Never claim the requester said, confirmed or approved anything that is not in their request; the approver relies on your summary being true.
 
@@ -228,6 +228,31 @@ async function runTool(s, name, input) {
           warnings: verdict.warnings,
           duplicate_justification: justification,
         });
+        // Small, clean orders are paid from the agent wallet the manager pre-authorized in PayPal; the rest wait for a person.
+        const wallet = getWallet();
+        const limits = policy.agent_wallet ?? {};
+        const spentToday = autoPaidToday();
+        const autoPay = wallet && !verdict.warnings.length
+          && verdict.total <= (limits.max_order_total ?? 0)
+          && spentToday + verdict.total <= (limits.max_per_day ?? 0);
+        if (autoPay) {
+          try {
+            const paid = await payWithWallet({ requisitionId: req.id, lines: r.lines, vaultId: wallet.payment_token_id });
+            if (paid.status === "COMPLETED") {
+              s.result = updateRequisition(req.id, {
+                status: "ordered", auto_paid: true, approver: "Agent wallet", approved_at: new Date().toISOString(),
+                approved_by: `Agent wallet (authorized by ${wallet.authorized_by})`, payer_email: wallet.payer_email,
+                paypal_order_id: paid.id, paypal_status: paid.status, capture_id: paid.capture_id, capture_status: paid.capture_status,
+              });
+              s.emit("requisition", s.result);
+              return { status: "paid_by_agent_wallet", requisition_id: req.id, po_number: s.result.po_number, total: verdict.total, paypal_order_id: paid.id };
+            }
+            updateRequisition(req.id, { auto_pay_error: `PayPal returned ${paid.status}` });
+          } catch (err) {
+            console.error("agent wallet payment failed, falling back to approval:", err.message);
+            updateRequisition(req.id, { auto_pay_error: err.message.slice(0, 300) });
+          }
+        }
         try {
           const order = await createOrder({ requisitionId: req.id, lines: r.lines, baseUrl: s.request.base_url });
           s.result = updateRequisition(req.id, { paypal_order_id: order.id, paypal_status: order.status, approve_url: order.approve_url });

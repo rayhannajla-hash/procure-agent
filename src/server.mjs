@@ -4,9 +4,9 @@ import { readFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
 import { runAgent, agentMode, MODEL } from "./agent.mjs";
-import { captureOrder, getOrder } from "./paypal.mjs";
+import { captureOrder, getOrder, createWalletSetup, confirmWallet, revokeWallet } from "./paypal.mjs";
 import { policySummary } from "./policy.mjs";
-import { listRequisitions, getRequisition, updateRequisition, allBudgets, resetLedger, policy } from "./store.mjs";
+import { listRequisitions, getRequisition, updateRequisition, allBudgets, resetLedger, policy, getWallet, setWallet, autoPaidToday } from "./store.mjs";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const PUBLIC = path.join(here, "..", "public");
@@ -139,6 +139,63 @@ async function handleOrderStatus(res, id) {
   }
 }
 
+// ---- agent wallet
+const pendingSetups = new Map(); // setup token id -> created at
+
+function walletStatus() {
+  const w = getWallet();
+  const limits = policy.agent_wallet ?? {};
+  return {
+    authorized: !!w,
+    authorized_by: w?.authorized_by ?? null,
+    payer_email: w?.payer_email ?? null,
+    authorized_at: w?.authorized_at ?? null,
+    max_order_total: limits.max_order_total ?? 0,
+    max_per_day: limits.max_per_day ?? 0,
+    spent_today: autoPaidToday(),
+  };
+}
+
+async function handleWalletSetup(req, res) {
+  try {
+    const setup = await createWalletSetup({ baseUrl: baseUrl(req) });
+    pendingSetups.set(setup.setup_token_id, Date.now());
+    json(res, 200, setup);
+  } catch (err) {
+    console.error("wallet setup failed:", err);
+    json(res, 502, { error: String(err.message).slice(0, 300) });
+  }
+}
+
+async function handleWalletConfirm(req, res) {
+  let id;
+  try { id = String(JSON.parse(await readBody(req)).setup_token_id ?? ""); } catch { /* ignore */ }
+  if (!id || !pendingSetups.has(id)) return json(res, 400, { error: "Unknown or expired authorization. Start again from the wallet card." });
+  try {
+    const t = await confirmWallet(id);
+    pendingSetups.delete(id);
+    const old = getWallet();
+    setWallet({ ...t, authorized_by: t.payer_name || t.payer_email || "a manager", authorized_at: new Date().toISOString() });
+    if (old?.payment_token_id && old.payment_token_id !== t.payment_token_id) revokeWallet(old.payment_token_id).catch(() => {});
+    json(res, 200, walletStatus());
+  } catch (err) {
+    console.error("wallet confirm failed:", err);
+    json(res, 502, { error: String(err.message).slice(0, 300) });
+  }
+}
+
+async function handleWalletRevoke(res) {
+  const w = getWallet();
+  if (!w) return json(res, 200, walletStatus());
+  try {
+    await revokeWallet(w.payment_token_id);
+  } catch (err) {
+    console.error("wallet revoke at PayPal failed (removing locally anyway):", err.message);
+  }
+  setWallet(null);
+  json(res, 200, walletStatus());
+}
+
 async function serveStatic(req, res) {
   const url = new URL(req.url, "http://x");
   const rel = url.pathname === "/" ? "index.html" : url.pathname.slice(1);
@@ -163,6 +220,10 @@ const server = http.createServer((req, res) => {
   if (req.method === "GET" && m && !m[2]) { const r = getRequisition(m[1]); return r ? json(res, 200, r) : json(res, 404, { error: "not found" }); }
   if (req.method === "GET" && pathname === "/api/requisitions") return json(res, 200, listRequisitions());
   if (req.method === "GET" && pathname === "/api/budgets") return json(res, 200, allBudgets());
+  if (req.method === "GET" && pathname === "/api/wallet") return json(res, 200, walletStatus());
+  if (req.method === "POST" && pathname === "/api/wallet/setup") return handleWalletSetup(req, res);
+  if (req.method === "POST" && pathname === "/api/wallet/confirm") return handleWalletConfirm(req, res);
+  if (req.method === "POST" && pathname === "/api/wallet/revoke") return handleWalletRevoke(res);
   if (req.method === "GET" && pathname === "/api/config") {
     return json(res, 200, { paypal_client_id: process.env.PAYPAL_CLIENT_ID, paypal_env: process.env.PAYPAL_ENV ?? "sandbox",
       agent: agentMode, model: MODEL, policy: policySummary(), allow_reset: ALLOW_RESET });

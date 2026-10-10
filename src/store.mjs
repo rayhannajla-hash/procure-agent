@@ -108,7 +108,25 @@ export function recentSimilar(costCenter, product, days = 14, now = Date.now()) 
   return hits.sort((x, y) => y.created_at.localeCompare(x.created_at)).slice(0, 3);
 }
 
+// Demo reset clears requisitions and POs but keeps the agent wallet, so a judge does not have to re-authorize.
 export function resetLedger() {
-  db = empty();
+  db = { ...empty(), wallet: db.wallet ?? null };
   save();
+}
+
+// The agent wallet: a PayPal payment token (Vault) a manager approved for small, policy-compliant purchases.
+export const getWallet = () => db.wallet ?? null;
+
+export function setWallet(wallet) {
+  db.wallet = wallet;
+  save();
+  return wallet;
+}
+
+// What the agent has paid from the wallet since midnight UTC.
+export function autoPaidToday(now = new Date().toISOString()) {
+  const day = now.slice(0, 10);
+  return Math.round(db.requisitions
+    .filter((r) => r.auto_paid && r.status === "ordered" && r.created_at.slice(0, 10) === day)
+    .reduce((sum, r) => sum + r.total, 0) * 100) / 100;
 }
