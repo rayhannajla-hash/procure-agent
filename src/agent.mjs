@@ -10,6 +10,8 @@ import { addRequisition, updateRequisition, policy } from "./store.mjs";
 const GEMINI_MODELS = (process.env.GEMINI_MODEL || "gemini-3.8-flash,gemini-3.5-flash,gemini-3.5-flash-lite")
   .split(",").map((m) => m.trim()).filter(Boolean);
 const MAX_TURNS = 14;
+// Words that make a quoted sentence an actual reason to buy again (English and Indonesian).
+const REASON_WORDS = /\b(broke|broken|break|fail|failed|failure|faulty|damaged|defective|worn|lost|stolen|replace|replacement|replacing|additional|extra|spare|more|another|second|new hires?|new operators?|expan\w*|second shift|rusak|patah|hilang|ganti|pengganti|tambahan|tambah|cadangan|lagi)\b/;
 const FINISH_NUDGE = "You have not finished. Do not ask the requester questions: use the information given, make reasonable assumptions and state them in the summary. Call submit_requisition if a compliant basket exists, otherwise decline_request.";
 
 export const agentMode = process.env.GEMINI_API_KEY ? "gemini" : "scripted";
@@ -73,6 +75,10 @@ const TOOL_DEFS = [
           },
         },
         summary: { type: "string", description: "Two or three sentences for the approver: what is being bought, for what, and why this choice." },
+        duplicate_justification: {
+          type: "string",
+          description: "Required when check_policy warned about a recent similar purchase: copy, word for word, the sentence of the request that says why another one is needed (e.g. a broken unit, more people). The server checks it appears in the request.",
+        },
         compared: {
           type: "array",
           description: "The other listings you weighed and why each lost, so the approver can see the comparison.",
@@ -113,12 +119,14 @@ How to work:
 3. Rule out listings that contradict a must-have (wrong lens tint, wrong voltage, wrong size, not the item asked for), even if they are cheaper. A must-have counts as met only when the title, features or description show it; if no listing shows it, try different terms. If the approved retailers simply do not carry a fitting item, decline and say which kind of supplier Purchasing should add (you may run one search with approved_only=false to show what exists elsewhere).
 4. Among the listings that meet every must-have, pick the best value: price, approved retailer, stock, rating. Cheapest is not automatically best if a slightly dearer listing fits clearly better.
 5. Packs: when a listing is a pack (e.g. "Pack of 12", "5pcs", "box of 10", "2-pack"), the order quantity is the number of packs. Buy enough packs to cover the requested units with the least overshoot, and report units_covered. Never order 10 boxes of 12 when 10 pieces were asked for.
-6. Run check_policy on the basket. If a rule fails, adapt (another listing, an approved retailer, a cheaper model that still meets every must-have) and check again.
+6. Run check_policy on the basket. If a rule fails, adapt (another listing, an approved retailer, a cheaper model that still meets every must-have) and check again. If it warns about a recent similar purchase by this cost center, go ahead only when the request itself says why another one is needed (more units, a different spec, a replacement for a broken one) and say so in the summary; otherwise decline as a likely duplicate and point to the earlier requisition or PO.
 7. Before submitting, check each requirement against the chosen listing once more and list the requirements in submit_requisition.
 - Finish with exactly one of: submit_requisition (everything passes), or decline_request (it cannot be bought within policy). When the order is too large or the budget is short, decline and point to the right next step instead of trimming the order.
 - Use only refs that came back from search_catalog. Never invent products, prices, retailers or stock.
 
 Policy in force (enforced in code, you cannot override it): one order at most $${p.hard_limit_per_order}; unit price at most $${p.max_unit_price}; 1-${p.max_quantity_per_line} units per line; in stock only; approved retailers only (${p.approved_retailers.join(", ")}); no restricted items (${p.blocked_keywords.join(", ")}). Approvers: ${p.approval_tiers.map((t) => `up to $${t.max_total} -> ${t.approver}`).join("; ")}.
+
+Never claim the requester said, confirmed or approved anything that is not in their request; the approver relies on your summary being true.
 
 There is no back-and-forth with the requester: never end your turn with a question. If a detail is missing, make a reasonable assumption for a factory setting and state it in the summary.
 
@@ -188,6 +196,20 @@ async function runTool(s, name, input) {
         if (verdict.verdict === "blocked") {
           return { status: "blocked", failed: verdict.checks.filter((c) => !c.pass), note: "Nothing was ordered. Adapt the basket or call decline_request." };
         }
+        let justification = null;
+        if (verdict.warnings.length) {
+          // The reason must be the requester's own words and actually give a reason to buy again.
+          const norm = (t) => String(t ?? "").toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+          const quote = norm(input.duplicate_justification);
+          if (quote.length < 12 || !norm(s.request.text).includes(quote) || !REASON_WORDS.test(quote)) {
+            return {
+              status: "needs_justification",
+              warnings: verdict.warnings,
+              note: "Nothing was ordered. This cost center recently bought or requested a similar item. If the request itself says why another one is needed (broken, replacement, more people, extra line), resubmit with duplicate_justification copied word for word from that sentence. Otherwise call decline_request and point to the earlier requisition or PO.",
+            };
+          }
+          justification = input.duplicate_justification.trim();
+        }
         const lineRecords = r.lines.map(({ ref, product, quantity, units_covered, reason }) =>
           ({ ref, quantity, units_covered, reason, product, line_total: Math.round(product.price * quantity * 100) / 100 }));
         const compared = (input.compared ?? []).filter((c) => s.catalog.has(c.ref)).map((c) => ({ ...c, product: s.catalog.get(c.ref) }));
@@ -203,6 +225,8 @@ async function runTool(s, name, input) {
           currency: verdict.currency,
           approver: verdict.approver,
           checks: verdict.checks,
+          warnings: verdict.warnings,
+          duplicate_justification: justification,
         });
         try {
           const order = await createOrder({ requisitionId: req.id, lines: r.lines, baseUrl: s.request.base_url });
@@ -241,7 +265,14 @@ async function generate(contents, config) {
         modelIdx = i;
         return { response, model: GEMINI_MODELS[i] };
       } catch (err) {
-        if (!(err instanceof ApiError)) throw err;
+        if (!(err instanceof ApiError)) {
+          // Network blips (connect timeout, reset) get one retry on the same model.
+          if (attempt === 0 && /fetch failed|ECONNRESET|ETIMEDOUT|UND_ERR/.test(`${err.message} ${err.cause?.code ?? ""}`)) {
+            await new Promise((r) => setTimeout(r, 2000));
+            continue;
+          }
+          throw err;
+        }
         if (err.status === 503 && attempt === 0) { await new Promise((r) => setTimeout(r, 2000)); continue; }
         if (err.status === 404 || err.status === 429 || err.status === 503) break; // next model
         console.error("gemini error:", err);

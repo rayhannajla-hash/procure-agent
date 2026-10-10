@@ -73,6 +73,8 @@ textarea { resize: vertical; min-height: 84px; }
 .checks li::before { position: absolute; left: 0; font-weight: 700; }
 .checks li.pass::before { content: "✓"; color: var(--ok); }
 .checks li.failc::before { content: "✕"; color: var(--bad); }
+.checks li.warnc::before { content: "⚠"; color: #b7791f; }
+.warnbox { background: var(--warn-bg); border: 1px solid var(--line); padding: 8px 10px; border-radius: 8px; font-size: 14px; margin: 6px 0; }
 .checks b { font-weight: 600; }
 .verdict { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; flex-wrap: wrap; margin-bottom: 8px; }
 .big { font-size: 22px; font-weight: 700; }

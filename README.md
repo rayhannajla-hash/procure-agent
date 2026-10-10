@@ -41,7 +41,7 @@ Agent tools:
 | Tool | Purpose |
 |---|---|
 | `search_catalog` | Channel3 search, in-stock listings from approved retailers only (filtered by Channel3 website id), optional price ceiling; at most 4 searches per request |
-| `check_policy` | Dry-run the spend policy on a draft basket |
+| `check_policy` | Dry-run the spend policy on a draft basket, including recent similar purchases by the same cost center |
 | `submit_requisition` | Final basket: policy re-check in code, then PayPal `create_order`, routed to the approver |
 | `decline_request` | Stop when the request cannot be met within policy, and say what to do instead (for example, raise an RFQ) |
 
@@ -81,6 +81,7 @@ To approve a payment you need a **sandbox Personal (buyer) account**: PayPal Dev
 - one order at most $600; unit price at most $400; 1-20 units per line; in stock only
 - approved retailers only (Micro Center, Newegg, Home Depot, Lowe's, Northern Tool, Staples, Walmart, Target, and others); searches are restricted to them
 - at most 4 catalog searches per request, so a vague request cannot burn the search budget
+- **duplicate check**: if the same cost center bought or requested a similar item in the last 14 days, the order goes ahead only when the request itself says why another one is needed (a broken unit, more people). The server checks that the agent's stated reason is quoted word for word from the request, so the agent cannot invent one; the approver sees the warning and the quote
 - restricted items blocked (gift cards, alcohol, tobacco, and so on)
 - monthly budgets per cost center (Line 2 Maintenance, QA Lab, Safety)
 - approval tiers by amount: Line Supervisor up to $150, Plant Manager up to $600

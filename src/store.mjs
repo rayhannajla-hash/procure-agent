@@ -78,6 +78,36 @@ export function budgetFor(costCenter, now = new Date().toISOString()) {
 
 export const allBudgets = () => Object.keys(policy.cost_centers).map((k) => budgetFor(k));
 
+const STOP = new Set(["the", "and", "for", "with", "pack", "pcs", "set", "new", "inch", "black", "blue", "red", "orange", "model"]);
+const words = (t) => new Set(String(t).toLowerCase().match(/[a-z0-9]{3,}/g)?.filter((w) => !STOP.has(w)) ?? []);
+// Same item, or the same kind of item: titles mostly overlap, or same catalog category with at least two shared words.
+function similarItems(a, b) {
+  if (!a || !b) return false;
+  if (a.product_id && a.product_id === b.product_id) return true;
+  const A = words(a.title);
+  const B = words(b.title);
+  if (!A.size || !B.size) return false;
+  const shared = [...A].filter((w) => B.has(w)).length;
+  if (shared / new Set([...A, ...B]).size >= 0.5 || (shared >= 3 && shared === Math.min(A.size, B.size))) return true;
+  return !!a.category && a.category === b.category && shared >= 2;
+}
+
+// Ordered or pending purchases of the same or a very similar item by the same cost center in the last `days` days.
+export function recentSimilar(costCenter, product, days = 14, now = Date.now()) {
+  const since = now - days * 86400_000;
+  const hits = [];
+  for (const r of db.requisitions) {
+    if (r.cost_center !== costCenter || !["ordered", "awaiting_approval"].includes(r.status)) continue;
+    if (Date.parse(r.created_at) < since) continue;
+    for (const l of r.lines ?? []) {
+      if (similarItems(l.product, product)) {
+        hits.push({ id: r.id, po_number: r.po_number ?? null, status: r.status, created_at: r.created_at, title: l.product.title, quantity: l.quantity });
+      }
+    }
+  }
+  return hits.sort((x, y) => y.created_at.localeCompare(x.created_at)).slice(0, 3);
+}
+
 export function resetLedger() {
   db = empty();
   save();

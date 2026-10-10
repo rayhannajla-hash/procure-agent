@@ -98,22 +98,27 @@ function requirementsHtml(reqs) {
 
 const covers = (l) => (l.units_covered && l.units_covered !== l.quantity ? ` · covers ${esc(l.units_covered)} units` : "");
 
-function checksHtml(checks) {
-  return `<ul class="checks">${checks.map((c) => `<li class="${c.pass ? "pass" : "failc"}"><b>${esc(c.rule)}</b>: ${esc(c.detail)}</li>`).join("")}</ul>`;
+function checksHtml(checks, warnings = []) {
+  return `<ul class="checks">${checks.map((c) => `<li class="${c.pass ? "pass" : "failc"}"><b>${esc(c.rule)}</b>: ${esc(c.detail)}</li>`).join("")}${warnings.map((w) => `<li class="warnc"><b>${esc(w.rule)}</b>: ${esc(w.detail)}</li>`).join("")}</ul>`;
 }
+
+const warningBanner = (warnings, why) => (warnings?.length
+  ? `<div class="warnbox">⚠ ${warnings.map((w) => esc(w.detail)).join("<br>⚠ ")}${why ? `<br><b>Requester's reason:</b> “${esc(why)}”` : ""}</div>`
+  : "");
 
 function policyCard(v) {
   const head = v.verdict === "blocked"
     ? `<span class="pill bad">blocked by policy</span>`
     : `<span class="pill ok">within policy</span> needs <b>${esc(v.approver)}</b>`;
   return `<div class="card"><div class="verdict"><h2>${v.draft ? "Policy check (draft)" : "Policy check (final)"}</h2><span>${head}</span></div>
-    <div class="big">${money(v.total)}</div>${checksHtml(v.checks)}</div>`;
+    <div class="big">${money(v.total)}</div>${checksHtml(v.checks, v.warnings)}</div>`;
 }
 
 function requisitionCard(r) {
   return `<div class="card">
     <div class="verdict"><h2>${esc(r.id)} routed for approval</h2><span class="pill ok">awaiting ${esc(r.approver)}</span></div>
     <p>${esc(r.summary)}</p>
+    ${warningBanner(r.warnings, r.duplicate_justification)}
     ${requirementsHtml(r.requirements)}
     <table class="lines">${r.lines.map((l) => `<tr><td>${esc(l.quantity)} ×</td><td>${esc(l.product.title)}<br><span class="ref">${esc(l.product.retailer)} · ${money(l.product.price)} each${covers(l)}</span><br><span class="ref">${esc(l.reason ?? "")}</span></td><td class="num">${money(l.line_total)}</td></tr>`).join("")}
       <tr><td></td><td><b>Total</b></td><td class="num"><b>${money(r.total)}</b></td></tr></table>
@@ -228,9 +233,10 @@ async function renderApprovals() {
     <div class="meta">${esc(r.requester)} · ${esc(r.cost_center)} · ${new Date(r.created_at).toLocaleString()}</div>
     <p class="meta">“${esc(r.request_text)}”</p>
     <p>${esc(r.summary)}</p>
+    ${warningBanner(r.warnings, r.duplicate_justification)}
     ${requirementsHtml(r.requirements)}
     <table class="lines">${r.lines.map((l) => `<tr><td>${esc(l.quantity)} ×</td><td><a href="${esc(l.product.url)}" target="_blank" rel="noopener">${esc(l.product.title)}</a><br><span class="ref">${esc(l.product.retailer)} · ${money(l.product.price)} each${covers(l)}</span>${l.reason ? `<br><span class="ref">${esc(l.reason)}</span>` : ""}</td><td class="num">${money(l.line_total)}</td></tr>`).join("")}</table>
-    <details><summary>Policy checks (${r.checks.filter((c) => c.pass).length}/${r.checks.length} pass)</summary>${checksHtml(r.checks)}</details>
+    <details><summary>Policy checks (${r.checks.filter((c) => c.pass).length}/${r.checks.length} pass${r.warnings?.length ? `, ${r.warnings.length} warning` : ""})</summary>${checksHtml(r.checks, r.warnings)}</details>
     <div class="buttons"><div class="pp" id="pp-${esc(r.id)}"></div><button type="button" class="secondary" data-reject="${esc(r.id)}">Reject</button></div>
     <div class="msg"></div>
   </div>`).join("");

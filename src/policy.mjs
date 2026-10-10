@@ -1,6 +1,6 @@
 // The spend policy, enforced in code. The agent can ask for a check, but it cannot talk its way past one:
 // submit_requisition re-runs evaluate() and refuses to create a PayPal order when any rule fails.
-import { policy, budgetFor } from "./store.mjs";
+import { policy, budgetFor, recentSimilar } from "./store.mjs";
 
 const money = (n) => `$${n.toFixed(2)}`;
 const round = (n) => Math.round(n * 100) / 100;
@@ -64,6 +64,18 @@ export function evaluate({ costCenter, lines }) {
       `(${money(budget.spent)} spent, ${money(budget.committed)} awaiting approval); this order needs ${money(total)}.`);
   }
 
+  // Advisory only: a recent purchase of the same kind of item does not block, but the agent and the approver see it.
+  const warnings = [];
+  for (const { product: p } of lines) {
+    for (const h of recentSimilar(costCenter, p, policy.duplicate_window_days ?? 14)) {
+      const when = new Date(h.created_at).toISOString().slice(0, 10);
+      warnings.push({
+        rule: "Recent similar purchase",
+        detail: `${costCenter} ${h.status === "ordered" ? `bought ${h.quantity} x ${h.title} on ${when} (${h.po_number})` : `already has ${h.quantity} x ${h.title} awaiting approval (${h.id}, ${when})`}.`,
+      });
+    }
+  }
+
   const blocked = checks.some((c) => !c.pass);
   return {
     verdict: blocked ? "blocked" : "needs_approval",
@@ -71,6 +83,7 @@ export function evaluate({ costCenter, lines }) {
     currency: policy.currency,
     approver: blocked ? null : approverFor(total),
     checks,
+    warnings,
     budget,
   };
 }
