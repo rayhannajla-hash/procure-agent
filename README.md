@@ -43,7 +43,7 @@ The design choice: the model never holds a "pay" tool. It can only *propose* a b
 
 - **Google Gemini** (via `@google/genai`) runs a tool-use loop in `src/agent.mjs`. It turns the request and its use into must-have specs (operators working indoors need clear lenses, bench tools should be ESD-safe), rules out listings that contradict them, works out pack sizes (10 pieces is not 10 boxes of 12), adapts when a policy check fails, and writes the justification and the "also compared" notes the approver sees. The approver sees the must-haves next to the listing that meets them. If one Gemini model is unavailable or out of quota, the next one in `GEMINI_MODEL` is tried.
 - **Channel3** provides the product data: titles, prices, stock, retailer and buy links across 25,000+ retailers.
-- Without a Gemini key, the app still runs a fixed, non-AI playbook (search, cheapest compliant listing) so the PayPal flow can be tested.
+- Without a Gemini key, the app runs a fixed, non-AI playbook (search, cheapest compliant listing) so the PayPal flow can still be tested. The same playbook takes over when the model is overloaded or out of quota mid-request, with a note on screen: a model having a bad day does not take purchasing down with it.
 
 Agent tools:
 

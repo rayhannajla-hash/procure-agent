@@ -14,6 +14,9 @@ const MAX_TURNS = 14;
 const REASON_WORDS = /\b(broke|broken|break|fail|failed|failure|faulty|damaged|defective|worn|lost|stolen|replace|replacement|replacing|additional|extra|spare|more|another|second|new hires?|new operators?|expan\w*|second shift|rusak|patah|hilang|ganti|pengganti|tambahan|tambah|cadangan|lagi)\b/;
 const FINISH_NUDGE = "You have not finished. Do not ask the requester questions: use the information given, make reasonable assumptions and state them in the summary. Call submit_requisition if a compliant basket exists, otherwise decline_request.";
 
+const MODEL_UNAVAILABLE_MESSAGE = "All configured Gemini models are unavailable or out of free quota right now.";
+const MODEL_UNAVAILABLE = /unavailable or out of free quota/;
+
 export const agentMode = process.env.GEMINI_API_KEY ? "gemini" : "scripted";
 export const MODEL = agentMode === "gemini" ? GEMINI_MODELS[0] : null;
 
@@ -306,7 +309,7 @@ async function generate(contents, config) {
       }
     }
   }
-  throw new Error("All configured Gemini models are unavailable or out of free quota right now.");
+  throw new Error(MODEL_UNAVAILABLE_MESSAGE);
 }
 
 async function geminiLoop(s) {
@@ -356,8 +359,8 @@ async function geminiLoop(s) {
   return { ...usage, models: [...usage.models] };
 }
 
-// Without a model key: search the request text, take the cheapest compliant listing, quantity 1.
-async function scriptedRun(s) {
+// Without a usable model: search the request text, take the cheapest compliant listing, quantity 1.
+async function scriptedRun(s, note) {
   const step = async (tool, input) => {
     const id = `script-${tool}`;
     s.emit("step", { id, tool, input });
@@ -365,7 +368,7 @@ async function scriptedRun(s) {
     s.emit("step_done", { id, ok: out?.status !== "error" });
     return out;
   };
-  s.emit("note", { text: "No language model configured: running the fixed playbook (search, cheapest compliant listing, quantity 1)." });
+  s.emit("note", { text: note ?? "No language model configured: running the fixed playbook (search, cheapest compliant listing, quantity 1)." });
   const found = await step("search_catalog", { query: s.request.text.slice(0, 120), limit: 8 });
   const pick = (found.results ?? []).filter((r) => r.approved_retailer && r.in_stock && r.price <= policy.max_unit_price)
     .sort((a, b) => a.price - b.price)[0];
@@ -379,7 +382,21 @@ async function scriptedRun(s) {
 export async function runAgent(request, emit) {
   const s = new Session(emit, request);
   emit("start", { mode: agentMode, model: MODEL });
-  const usage = agentMode === "gemini" ? await geminiLoop(s) : await scriptedRun(s);
+  let usage;
+  if (agentMode === "gemini") {
+    try {
+      usage = await geminiLoop(s);
+    } catch (err) {
+      // The model being overloaded or out of quota must not take the whole workflow down: fall back to the
+      // fixed playbook, so the policy and the PayPal flow still work. Anything else is a real failure.
+      if (s.result || !MODEL_UNAVAILABLE.test(err.message)) throw err;
+      s.searches = 0; // a fresh search budget for the one search the playbook makes
+      await scriptedRun(s, "The language model is unavailable right now (overloaded or out of quota), so this request ran on the fixed playbook instead: search, cheapest compliant listing, quantity 1. The spend policy and the PayPal flow are unchanged.");
+      usage = { input_tokens: 0, output_tokens: 0, models: ["unavailable: fixed playbook"] };
+    }
+  } else {
+    usage = await scriptedRun(s);
+  }
   if (!s.result) throw new Error("The agent finished without submitting or declining the request.");
   emit("done", { usage });
   return s.result;
