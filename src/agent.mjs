@@ -10,6 +10,9 @@ import { addRequisition, updateRequisition, policy, getWallet, autoPaidToday } f
 const GEMINI_MODELS = (process.env.GEMINI_MODEL || "gemini-3.8-flash,gemini-3.5-flash,gemini-3.5-flash-lite")
   .split(",").map((m) => m.trim()).filter(Boolean);
 const MAX_TURNS = 14;
+// A single model call never blocks the judge for long: an overloaded model (503 can take ~3 min to
+// come back) is abandoned here and the next model in the list gets the turn.
+const GEN_TIMEOUT_MS = Number(process.env.GEMINI_TIMEOUT_MS || 25000);
 // Words that make a quoted sentence an actual reason to buy again (English and Indonesian).
 const REASON_WORDS = /\b(broke|broken|break|fail|failed|failure|faulty|damaged|defective|worn|lost|stolen|replace|replacement|replacing|additional|extra|spare|more|another|second|new hires?|new operators?|expan\w*|second shift|rusak|patah|hilang|ganti|pengganti|tambahan|tambah|cadangan|lagi)\b/;
 const FINISH_NUDGE = "You have not finished. Do not ask the requester questions: use the information given, make reasonable assumptions and state them in the summary. Call submit_requisition if a compliant basket exists, otherwise decline_request.";
@@ -289,11 +292,20 @@ async function generate(contents, config) {
   for (let i = modelIdx; i < GEMINI_MODELS.length; i++) {
     for (let attempt = 0; attempt < 2; attempt++) {
       try {
-        const response = await gemini.models.generateContent({ model: GEMINI_MODELS[i], contents, config });
+        const response = await gemini.models.generateContent({
+          model: GEMINI_MODELS[i],
+          contents,
+          config: { ...config, httpOptions: { ...(config.httpOptions ?? {}), timeout: GEN_TIMEOUT_MS } },
+        });
         modelIdx = i;
         return { response, model: GEMINI_MODELS[i] };
       } catch (err) {
         if (!(err instanceof ApiError)) {
+          // A model that ran past GEN_TIMEOUT_MS is treated as unavailable: next model, no waiting.
+          if (err.name === "AbortError" || /abort|timed out|timeout/i.test(err.message)) {
+            console.error(`gemini ${GEMINI_MODELS[i]} timed out after ${GEN_TIMEOUT_MS}ms`);
+            break;
+          }
           // Network blips (connect timeout, reset) get one retry on the same model.
           if (attempt === 0 && /fetch failed|ECONNRESET|ETIMEDOUT|UND_ERR/.test(`${err.message} ${err.cause?.code ?? ""}`)) {
             await new Promise((r) => setTimeout(r, 2000));
@@ -301,8 +313,9 @@ async function generate(contents, config) {
           }
           throw err;
         }
-        if (err.status === 503 && attempt === 0) { await new Promise((r) => setTimeout(r, 2000)); continue; }
-        if (err.status === 404 || err.status === 429 || err.status === 503) break; // next model
+        // 504 is also what the SDK reports when our own GEN_TIMEOUT_MS fires, and 500/502 are the same
+        // class of transient: none of them are worth a second try on the same model.
+        if ([404, 429, 500, 502, 503, 504].includes(err.status)) break; // next model
         console.error("gemini error:", err);
         throw new Error(err.status === 400 || err.status === 401 || err.status === 403
           ? "The language model rejected the server's API key." : `Language model request failed (${err.status}).`);
@@ -332,15 +345,22 @@ async function geminiLoop(s) {
     for (const part of candidate.content.parts ?? []) {
       if (part.text && !part.thought && part.text.trim()) s.emit("note", { text: part.text.trim() });
     }
+    // A thought-only turn comes back with no `parts` at all. The SDK only accepts Content objects that
+    // carry a parts array, and one bad entry makes the WHOLE next call throw "Mixing Content and Parts",
+    // which used to kill the run mid-way. Such a turn carries nothing to replay, so it is dropped.
+    const modelTurn = Array.isArray(candidate.content.parts) && candidate.content.parts.length
+      ? candidate.content // unchanged, so thought signatures survive
+      : null;
     const calls = response.functionCalls ?? [];
     if (!calls.length) {
       // The model stopped talking without a decision; ask once more for the required final tool call.
       if (nudges++ >= 2) break;
-      contents.push(candidate.content, { role: "user", parts: [{ text: FINISH_NUDGE }] });
+      if (modelTurn) contents.push(modelTurn);
+      contents.push({ role: "user", parts: [{ text: FINISH_NUDGE }] });
       continue;
     }
 
-    contents.push(candidate.content); // unchanged, so thought signatures survive
+    if (modelTurn) contents.push(modelTurn);
     const outs = [];
     for (const [i, c] of calls.entries()) { // in order: a submit must see the policy checks before it
       const id = c.id ?? `g${turn}-${i}`;
